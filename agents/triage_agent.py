@@ -5,9 +5,11 @@ Triage agent for authentication and routing
 import re
 from datetime import datetime
 from langchain.agents import create_agent
+from langchain_core.messages import SystemMessage
 from langchain_groq import ChatGroq
-# from langchain.agents import create_tool_calling_agent, AgentExecutor
-# from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from agents.interview_agent import InterviewAgent
+from agents.credit_agent import CreditAgent
+from agents.exchange_agent import ExchangeAgent
 from tools.customer_tools import AuthenticateCustomerTool
 from config import GROQ_API_KEY, GROQ_MODEL
 
@@ -21,122 +23,87 @@ class TriageAgent:
             temperature=0
         )
 
+        self.tools = [AuthenticateCustomerTool()]
+
         self.auth_tool = AuthenticateCustomerTool()
 
-        prompt = """
-        Você é um assistente especializado no triagem de clientes do Banco Ágil.
+        system_prompt = """"
+        Você é o Assistente de Triagem do Banco Ágil.
 
-        Sua função é:
-        1. Identificar se o cliente está autenticado com base no CPF e data de nascimento
-        2. Se não autenticado, coletar o CPF e a data de nascimento
-        3. Se autenticado, redirecionar para o serviço apropriado (consulta de saldo, aumento de limite, etc.)
+        Seu objetivo principal é AUTENTICAR o usuário.
 
-        Seja objetivo e amigável. Sempre pergunte claramente as informações necessárias.
+        Regras:
+        1. Para autenticar, você PRECISA do CPF e da Data de Nascimento.
+        2. Se o usuário não fornecer um dos dois, PEÇA educadamente.
+        3. Assim que tiver os dois dados, USE IMEDIATAMENTE a ferramenta 'authenticate_customer'.
+        4. Se a ferramenta retornar erro, explique o erro ao usuário e peça os dados corretos.
+        5. Se a ferramenta retornar sucesso, dê as boas vindas.
+        6. Quando o usuario ja estiver autenticado, indentifique-o e redirecione para o próximo passo.
+
+        Não tente adivinhar dados. Não invente CPFs. Somente use a ferramenta quando obtiver os dois dados necessários.
         """
+
+        sp = SystemMessage(system_prompt)
 
         agent = create_agent(
             model=self.llm,
-            tools=[self.auth_tool],
-            system_prompt=prompt
+            tools=self.tools,
+            system_prompt=sp
         )
         self.agent_executor = agent
 
-    def _run_agent(self, message: str, session_manager) -> str:
-        """Run the agent with the given message"""
-        result = self.agent_executor.invoke({
-            "input": message
-        })
-        return result.get("output", "")
-
-    def _extract_cpf(self, message: str):
-        digits = re.findall(r"\d+", message)
-        for d in digits:
-            if len(d) == 11:
-                return d
-        return None
-
-    def _normalize_birthdate(self, date_str: str):
-        try:
-            if re.match(r"^\d{2}/\d{2}/\d{4}$", date_str):
-                return date_str
-            if re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
-                dt = datetime.strptime(date_str, "%Y-%m-%d")
-                return dt.strftime("%d/%m/%Y")
-            if re.match(r"^\d{2}-\d{2}-\d{4}$", date_str):
-                dt = datetime.strptime(date_str, "%d-%m-%Y")
-                return dt.strftime("%d/%m/%Y")
-        except Exception:
-            pass
-        return None
-
-    def _extract_birthdate(self, message: str):
-        patterns = [
-            r"(\d{2}/\d{2}/\d{4})",
-            r"(\d{4}-\d{2}-\d{2})",
-            r"(\d{2}-\d{2}-\d{4})",
-        ]
-        for p in patterns:
-            m = re.search(p, message)
-            if m:
-                return self._normalize_birthdate(m.group(1))
-        return None
-
-    def _llm_classify_intent(self, message: str):
-        prompt = (
-            "Classifique a intenção do usuário como exatamente uma destas opções: "
-            "cambio, credito, outros. Responda apenas com a opção.\n\n" + message
-        )
-        try:
-            res = self.llm.invoke(prompt)
-            label = str(getattr(res, "content", str(res))).strip().lower()
-            print(f"LLM intent classification: {label}")
-            if label in {"cambio", "credito"}:
-                return label
-        except Exception:
-            pass
-        return "other"
-
     def process(self, message: str, session_manager) -> str:
-        if not session_manager.authenticated:
-            cpf = self._extract_cpf(message)
-            birthdate = self._extract_birthdate(message)
-            if cpf and birthdate:
-                try:
-                    _ = self.agent_executor.invoke({"input": f"cpf: {cpf}, data de nascimento: {birthdate}"})
-                    result = self.auth_tool.run({"cpf": cpf, "birthdate": birthdate})
-                    print(f"Auth tool result: {result}")
+        """Main process loop"""
 
-                    if "error" in result:
-                        session_manager.increment_auth_attempts()
-                        if not session_manager.can_retry_auth():
-                            return "Desculpe, não foi possível autenticar. Por favor, reinicie a conversa."
-                        return "Não consegui autenticar com os dados informados. Confirme seu CPF e data de nascimento no formato DD/MM/AAAA."
-                    
-                    session_manager.set_customer_data(result["cpf"], result)
-                    return (
-                        "Autenticação concluída com sucesso. Posso ajudar com câmbio de moedas ou operações de crédito."
-                        "O que você deseja fazer?"
-                    )
-                except Exception:
-                    session_manager.increment_auth_attempts()
-                    if not session_manager.can_retry_auth():
-                        return "Desculpe, houve um erro ao autenticar. Por favor, reinicie a conversa."
-                    return "Ocorreu um erro ao autenticar. Por favor, informe novamente seu CPF e data de nascimento."
+        if session_manager.authenticated:
+            return self._handle_routing(message, session_manager)
+
+        try:
+            print(f"Triagem Agent input: {message}")
+
+            response = self.agent_executor.invoke({"input": message})
+
+            print(f"Triagem Agent response: {response}")
+
+            agent_output_text = response["messages"][-1].content
+
+            print(f"Triagem Agent output: {agent_output_text}")
+
+            return agent_output_text
+
+        except Exception as e:
+            print(f"Erro no TriageAgent: {e}")
+            return "Desculpe, tive um problema técnico. Poderia repetir?"
+        
+    def _handle_routing(self, message: str, session_manager) -> str:
+        """Handle routing based on user intent"""
+
+        prompt_classification = (
+            f"O usuário disse: '{message}'. Classifique a intenção em APENAS uma destas palavras: "
+            "cambio, credito, entrevista, outros. Responda apenas com a palavra."
+        )
+
+        try:
+            intent = self.llm.invoke(prompt_classification).content.strip().lower()
+            print(f"🔀 Intent Routing: {intent}")
+
+            if "cambio" in intent:
+                session_manager.switch_agent("cambio")
+                agent = ExchangeAgent()
+                return agent.process(message, session_manager)
+            
+            elif "credito" in intent:
+                session_manager.switch_agent("credito")
+                agent = CreditAgent()
+                return agent.process(message, session_manager)
+            
+            elif "entrevista" in intent:
+                session_manager.switch_agent("entrevista")
+                agent = InterviewAgent()
+                return agent.process(message, session_manager)
+
             else:
-                response = self._run_agent(message, session_manager)
-                if response:
-                    return response + "\n\nPor favor, informe seu CPF e data de nascimento (DD/MM/AAAA)."
-                return "Para continuar, preciso do seu CPF e da sua data de nascimento (DD/MM/AAAA)."
-
-        label = self._llm_classify_intent(message)
-        if label == "cambio":
-            session_manager.switch_agent("cambio")
-            return "Que bom, o que você deseja saber sobre câmbio de moedas?"
-        if label == "credito":
-            session_manager.switch_agent("credito")
-            return "Que bom, o que você deseja fazer sobre operações de crédito?"
-        if label == "entrevista":
-            session_manager.switch_agent("entrevista")
-            return "Vamos comecar me forneca sua renda mensal"
-
-        return "Posso ajudar com câmbio de moedas ou operações de crédito (consultar limite, solicitar aumento). O que você deseja?"
+                return "Entendi. Posso ajudar especificamente com Câmbio ou Crédito. Qual prefere?"
+        except Exception:
+            print(f"Erro no TriageAgent: {e}")
+            return "Não entendi. Você quer falar sobre Câmbio ou Crédito?"
