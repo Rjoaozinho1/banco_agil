@@ -135,5 +135,8 @@ class TriageAgent:
         if label == "credito":
             session_manager.switch_agent("credito")
             return "Que bom, o que você deseja fazer sobre operações de crédito?"
+        if label == "entrevista":
+            session_manager.switch_agent("entrevista")
+            return "Vamos comecar me forneca sua renda mensal"
 
         return "Posso ajudar com câmbio de moedas ou operações de crédito (consultar limite, solicitar aumento). O que você deseja?"

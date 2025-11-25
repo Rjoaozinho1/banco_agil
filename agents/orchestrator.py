@@ -33,15 +33,14 @@ class AgentOrchestrator:
         # Check for conversation end request
         if self._is_goodbye_message(message):
             return self._handle_goodbye(session_manager)
-        
-        # Route to appropriate agent
+
         if current_agent == "triage":
             return self.triage_agent.process(message, session_manager)
         
         elif current_agent == "credito":
             return self.credit_agent.process(message, session_manager)
         
-        elif current_agent == "interview":
+        elif current_agent == "entrevista":
             return self.interview_agent.process(message, session_manager)
         
         elif current_agent == "cambio":

@@ -21,22 +21,14 @@ class ExchangeAgent:
         self.exchange_tool = GetExchangeRateTool()
         
         # Create agent with tool
-        prompt = """Você é um assistente especializado em cotações de moedas do Banco Ágil.
+        prompt = f"""Você é um assistente especializado em cotações de moedas do Banco Ágil.
 
         Sua função é:
         1. Identificar qual moeda o cliente quer consultar
         2. Quando for consultar, chame a ferramenta get_exchange_rate passando APENAS o código da moeda em MAIÚSCULAS (ex: USD, EUR, GBP, JPY, ARS)
         3. Apresentar a cotação de forma clara e amigável
-        4. Oferecer consultar outras moedas ou encerrar
 
-        Seja objetivo e amigável. Sempre mencione que a cotação é em relação ao Real (BRL).
-
-        Exemplos:
-        - "Cotação do dólar" -> use get_exchange_rate com argumento "USD"
-        - "Quanto está o euro?" -> use get_exchange_rate com argumento "EUR"
-        - "Libra hoje" -> use get_exchange_rate com argumento "GBP"
-
-        Moedas comuns: USD (Dólar), EUR (Euro), GBP (Libra), JPY (Iene/Yen), ARS (Peso Argentino)"""
+        {input}"""
         
         agent = create_agent(model=self.llm, tools=[self.exchange_tool], system_prompt=prompt)
         self.agent_executor = agent
@@ -47,7 +39,6 @@ class ExchangeAgent:
         try:
             print(f"Exchange agent received message: {message}")
 
-            # Use LangChain agent to handle the exchange query
             result = self.agent_executor.invoke({
                 "input": message
             })
