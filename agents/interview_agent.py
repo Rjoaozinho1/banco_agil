@@ -4,108 +4,101 @@ Interview agent for credit score recalculation
 
 import re
 from langchain_groq import ChatGroq
-from langchain.agents import create_agent
-from tools.credit_tools import UpdateCustomerScoreTool
+from numpy import empty
+from tools.credit_tools import update_customer_score
+from utils.session_manager import SessionManager
 from config import GROQ_API_KEY, GROQ_MODEL
 
 class InterviewAgent:
     """Agent responsible for conducting credit score interview"""
-    
-    INTERVIEW_QUESTIONS = [
-        "renda_mensal",
-        "tipo_emprego",
-        "despesas_fixas",
-        "num_dependentes",
-        "tem_dividas"
-    ]
-    
+
     def __init__(self):
-        self.llm = ChatGroq(
-            api_key=GROQ_API_KEY,
-            model_name=GROQ_MODEL,
-            temperature=0
+        self.llm = ChatGroq(api_key=GROQ_API_KEY, model_name=GROQ_MODEL, temperature=0)
+        self.tools = [update_customer_score]
+        self.runnable = self.llm.bind_tools(self.tools)
+
+        self.system_prompt = (
+            "Você é um assistente de entrevista de crédito do Banco Ágil. "
+            "Siga estas regras de estilo: não cumprimente repetidamente, não repita que é uma entrevista, "
+            "mantenha respostas curtas (1–2 linhas) e objetivas. "
+            "Colete: renda_mensal (número), tipo_emprego (Formal/Autônomo/Desempregado), despesas_fixas (número), "
+            "num_dependentes (0, 1, 2, 3+), tem_dividas (sim/não). "
+            "Se a resposta estiver inválida, explique brevemente o motivo e peça novamente apenas o campo necessário. "
+            "NÃO chame ferramentas até concluir a entrevista e calcular o novo score. "
+            "Ao concluir, SOMENTE chame 'update_customer_score' se o novo score for MAIOR que o atual; nunca diminua o score."
         )
-        self.update_score_tool = UpdateCustomerScoreTool()
-
-        prompt = f"""Você é um assistente de entrevista de crédito do Banco Ágil.
-
-Conduza a entrevista passo a passo para coletar:
-- renda_mensal (número em reais)
-- tipo_emprego (Formal/Autônomo/Desempregado)
-- despesas_fixas (número em reais)
-- num_dependentes (0, 1, 2, 3+)
-- tem_dividas (sim/não)
-
-Se a resposta estiver inválida, explique brevemente e peça novamente de forma objetiva.
-Não chame ferramentas até que a entrevista esteja completa e o novo score tenha sido calculado.
-Respostas devem ser claras e amigáveis.
-
-{input}
-"""
-
-        agent = create_agent(model=self.llm, tools=[self.update_score_tool], system_prompt=prompt)
-        self.agent_executor = agent
     
-    def process(self, message: str, session_manager) -> str:
+    def process(self, message: str, session_manager: SessionManager) -> str:
         """Process message in interview agent"""
-        print(f"Interview agent received message: {message}")
-        print(f"Interview agent current_step: {session_manager.interview_step}")
+
+        print(f"[InterviewAgent] Received message: {message}")
+        print(f"[InterviewAgent] Current step: {session_manager.interview_step}")
+
         current_step = session_manager.interview_step
-        if not hasattr(session_manager, "interview_attempts"):
+
+        if session_manager.interview_attempts == None:
             session_manager.interview_attempts = {}
 
         if current_step == 0:
             num_check = self._extract_number(message)
-            print(f"Interview agent num_check: {num_check}")
-            if num_check is None:
-                return self._get_next_question(0)
+            print(f"[InterviewAgent] num_check: {num_check}")
 
-        # Process answer for current question
-        if current_step < len(self.INTERVIEW_QUESTIONS):
-            question_type = self.INTERVIEW_QUESTIONS[current_step]
-            print(f"Interview agent question_type: {question_type}")
+        required_fields = [
+            "renda_mensal",
+            "tipo_emprego",
+            "despesas_fixas",
+            "num_dependentes",
+            "tem_dividas",
+        ]
+
+        if current_step < len(required_fields):
+
+            question_type = required_fields[current_step]
+            print(f"[InterviewAgent] question_type: {question_type}")
+            
             answer = self._extract_answer(message, question_type)
-            print(f"Interview agent extracted answer: {answer}")
+            print(f"[InterviewAgent] extracted answer: {answer}")
             
             if answer is None:
                 session_manager.interview_attempts[question_type] = session_manager.interview_attempts.get(question_type, 0) + 1
-                print(f"Interview agent invalid answer attempts for {question_type}: {session_manager.interview_attempts[question_type]}")
+                print(f"[InterviewAgent] invalid attempts for {question_type}: {session_manager.interview_attempts[question_type]}")
+                
                 if session_manager.interview_attempts[question_type] >= 3:
-                    session_manager.should_end = True
-                    print("Interview agent ending due to repeated invalid answers")
+                    session_manager.end_session()
+                    print("[InterviewAgent] Ending due to repeated invalid answers")
                     return "Entrevista encerrada por respostas inválidas repetidas. Obrigado!"
-                retry_msg = self._get_retry_message(question_type)
-                print(f"Interview agent retry message: {retry_msg}")
-                agent_msg = self._run_agent(retry_msg)
-                print(f"Interview agent agent_msg: {agent_msg}")
+
+                context = self._build_interview_context(session_manager, reason=f"Resposta inválida para {question_type}")
+                agent_msg = self._llm_ask_next(message, session_manager, context, force_field=question_type)
+                print(f"[InterviewAgent] llm retry msg: {agent_msg}")
+
                 return agent_msg
-            
-            # Store answer
+
             session_manager.interview_data[question_type] = answer
-            print(f"Interview agent stored: {session_manager.interview_data}")
+            print(f"[InterviewAgent] stored: {session_manager.interview_data}")
+
             session_manager.interview_step += 1
-            print(f"Interview agent advanced to step: {session_manager.interview_step}")
+            print(f"[InterviewAgent] advanced to step: {session_manager.interview_step}")
             
-            # Check if interview is complete
-            if session_manager.interview_step >= len(self.INTERVIEW_QUESTIONS):
-                print("Interview agent completing interview")
+            if session_manager.interview_step >= len(required_fields):
+                print("[InterviewAgent] Completing interview")
                 return self._finalize_interview(session_manager)
             
-            # Ask next question
-            next_q = self._get_next_question(session_manager.interview_step)
-            print(f"Interview agent next question: {next_q}")
-            return next_q
+            context = self._build_interview_context(session_manager)
+            next_msg = self._llm_ask_next(message, session_manager, context)
+            print(f"[InterviewAgent] next llm msg: {next_msg}")
+            
+            return next_msg
         
         return "Entrevista já finalizada."
     
     def _extract_answer(self, message: str, question_type: str):
         """Extract answer based on question type"""
         
-        print(f"Interview agent extracting answer for {question_type} from message: {message}")
+        print(f"[InterviewAgent] extracting answer for {question_type} from message: {message}")
         message_lower = message.lower()
         
         if question_type == "renda_mensal":
-            # Extract number
             amount = self._extract_number(message)
             return amount if amount and amount > 0 else None
         
@@ -120,12 +113,12 @@ Respostas devem ser claras e amigáveis.
         
         elif question_type == "despesas_fixas":
             amount = self._extract_number(message)
-            print(f"Interview agent despesas_fixas parsed: {amount}")
+            print(f"[InterviewAgent] despesas_fixas parsed: {amount}")
             return amount if amount and amount >= 0 else None
         
         elif question_type == "num_dependentes":
             num = self._extract_number(message)
-            print(f"Interview agent num_dependentes parsed: {num}")
+            print(f"[InterviewAgent] num_dependentes parsed: {num}")
             if num is not None and num >= 0:
                 if num >= 3:
                     return "3+"
@@ -143,7 +136,8 @@ Respostas devem ser claras e amigáveis.
     
     def _extract_number(self, message: str) -> float:
         """Extract number from message"""
-        print(f"Interview agent _extract_number raw message: {message}")
+
+        print(f"[InterviewAgent] _extract_number raw message: {message}")
         clean_message = message.replace('R$', '').replace('r$', '').replace('.', '').replace(',', '.')
         
         pattern = r'(\d+\.?\d*)'
@@ -152,103 +146,175 @@ Respostas devem ser claras e amigáveis.
         if match:
             try:
                 value = float(match.group(1))
-                print(f"Interview agent _extract_number parsed value: {value}")
+                print(f"[InterviewAgent] _extract_number parsed value: {value}")
                 return value
             except ValueError:
-                print("Interview agent _extract_number ValueError")
+                print("[InterviewAgent] _extract_number ValueError")
                 return None
         return None
     
-    def _get_next_question(self, step: int) -> str:
-        """Get next interview question"""
-        
-        questions = {
-            0: "Para começar, qual é sua renda mensal? (informe o valor em reais)",
-            1: """Qual é seu tipo de emprego?
-- Formal (CLT/Carteira assinada)
-- Autônomo (Freelancer/PJ)
-- Desempregado""",
-            2: "Quais são suas despesas fixas mensais? (aluguel, contas, etc. - informe o valor total em reais)",
-            3: "Quantos dependentes você tem? (filhos ou outras pessoas que dependem de você financeiramente)",
-            4: "Você possui dívidas ativas no momento? (responda sim ou não)"
-        }
-        
-        next_q = questions.get(step, "")
-        print(f"Interview agent _get_next_question step={step} next_q={next_q}")
-        return next_q
+    def _build_interview_context(self, session_manager: SessionManager, reason: str | None = None) -> str:
+        data = session_manager.interview_data
+        required_fields = [
+            "renda_mensal",
+            "tipo_emprego",
+            "despesas_fixas",
+            "num_dependentes",
+            "tem_dividas",
+        ]
+        missing = [f for f in required_fields if f not in data or data.get(f) in (None, "")]
+        attempts = session_manager.interview_attempts or {}
+        rules = (
+            "Regras: renda/despesas como números (R$ permitido), tipo_emprego em {Formal, Autônomo, Desempregado}, "
+            "num_dependentes inteiro (usar '3+' para três ou mais), tem_dividas em {sim, não}."
+        )
+        ctx = (
+            f"CPF: {session_manager.customer_cpf or 'N/A'}\n"
+            f"Score Atual: {session_manager.get_customer_score() or 0:.0f}\n"
+            f"Dados coletados: {data}\n"
+            f"Faltantes: {missing}\n"
+            f"Tentativas: {attempts}\n"
+            f"{rules}\n"
+        )
+        if reason:
+            ctx += f"Motivo: {reason}\n"
+        print(f"[InterviewAgent] context: {ctx}")
+        return ctx
+
+    def _llm_ask_next(self, message: str, session_manager: SessionManager, context: str, force_field: str | None = None) -> str:
+        try:
+            instructions = (
+                "Gere uma única mensagem em PT-BR, clara e amigável, sem cumprimentos e sem repetir informações já ditas."
+                " Pergunte APENAS o próximo campo faltante com orientação mínima."
+                " Se 'force_field' estiver presente, pergunte especificamente por ele."
+            )
+            full_input = [("system", self.system_prompt), ("system", context)]
+            try:
+                examples_shown = session_manager.interview_examples_shown or {}
+                current_field = force_field
+                if not current_field:
+                    required_fields = [
+                        "renda_mensal",
+                        "tipo_emprego",
+                        "despesas_fixas",
+                        "num_dependentes",
+                        "tem_dividas",
+                    ]
+                    data = session_manager.interview_data
+                    for f in required_fields:
+                        if f not in data or data.get(f) in (None, ""):
+                            current_field = f
+                            break
+                if current_field and not examples_shown.get(current_field, False):
+                    example = ""
+                    if current_field == "renda_mensal":
+                        example = "Exemplo: 3500"
+                    elif current_field == "tipo_emprego":
+                        example = "Escolha: Formal, Autônomo ou Desempregado"
+                    elif current_field == "despesas_fixas":
+                        example = "Exemplo: 1200"
+                    elif current_field == "num_dependentes":
+                        example = "Responda: 0, 1, 2 ou 3+"
+                    elif current_field == "tem_dividas":
+                        example = "Responda: sim ou não"
+                    if example:
+                        full_input.append(("system", f"Inclua um único exemplo curto apenas desta vez: {example}"))
+                        try:
+                            examples_shown[current_field] = True
+                            print(f"[InterviewAgent] examples_shown updated: {examples_shown}")
+                        except Exception as e:
+                            print(f"[InterviewAgent] examples_shown update error: {e}")
+            except Exception as e:
+                print(f"[InterviewAgent] examples_shown handling error: {e}")
+            
+            try:
+                history = session_manager.get_session_history()
+                for msg in history:
+                    full_input.append((msg.get("role"), msg.get("content")))
+            except Exception as e:
+                print(f"[InterviewAgent] Error reading history: {e}")
+
+            full_input.append(("system", instructions))
+
+            if force_field:
+                full_input.append(("system", f"Pergunte especificamente sobre: {force_field}"))
+
+            full_input.append(("user", message))
+            print(f"[InterviewAgent] ask_next full_input: {full_input}")
+
+            result = self.llm.invoke(full_input)
+            print(f"[InterviewAgent] ask_next result: {result}")
+
+            return result.content or "Por favor, informe o dado solicitado."
+        except Exception:
+            return "Por favor, informe o dado solicitado."
     
-    def _get_retry_message(self, question_type: str) -> str:
-        """Get retry message for invalid answer"""
-        
-        messages = {
-            "renda_mensal": "Por favor, informe um valor válido para sua renda mensal (apenas números):",
-            "tipo_emprego": "Por favor, escolha uma das opções: Formal, Autônomo ou Desempregado:",
-            "despesas_fixas": "Por favor, informe um valor válido para suas despesas fixas mensais:",
-            "num_dependentes": "Por favor, informe o número de dependentes (0, 1, 2, 3 ou mais):",
-            "tem_dividas": "Por favor, responda 'sim' ou 'não' sobre a existência de dívidas:"
-        }
-        
-        return messages.get(question_type, "Resposta inválida. Por favor, tente novamente:")
-    
-    def _finalize_interview(self, session_manager) -> str:
+    def _finalize_interview(self, session_manager: SessionManager) -> str:
         """Calculate new score and finalize interview"""
         
         data = session_manager.interview_data
-        print(f"Interview agent finalize with data: {data}")
+        print(f"[InterviewAgent] finalize with data: {data}")
         
         # Calculate new score using the formula
         new_score = self._calculate_score(data)
-        print(f"Interview agent calculated new_score: {new_score}")
+        print(f"[InterviewAgent] calculated new_score: {new_score}")
+
+        current_score = session_manager.get_customer_score()
         
-        # Update customer score
-        print(f"Interview agent calling update_score_tool with cpf={session_manager.customer_cpf}, new_score={new_score}")
-        result = self.update_score_tool.run({
-            "cpf": session_manager.customer_cpf,
-            "new_score": new_score
-        })
-        print(f"Interview agent update_score_tool result: {result}")
+        print(f"[InterviewAgent] current_score={current_score}")
+
+        if new_score <= current_score:
+            print("[InterviewAgent] new_score not higher; skipping tool invocation")
+            session_manager.interview_data = {}
+            session_manager.interview_step = 0
+            session_manager.interview_attempts = {}
+            session_manager.switch_agent("credit")
+            response = (
+                f"Entrevista concluída. Seu score atual permanece {current_score:.0f}. "
+                f"Para melhorar seu score, podemos revisar suas informações e hábitos financeiros."
+            )
+
+            return response
         
-        if "error" in result:
-            print("Interview agent error updating score")
+        print(f"[InterviewAgent] invoking update_customer_score with cpf={session_manager.customer_cpf}, new_score={new_score}")
+        import json
+        out = update_customer_score.invoke({"cpf": session_manager.customer_cpf, "new_score": new_score})
+        print(f"[InterviewAgent] update_customer_score raw result: {out}")
+        
+        try:
+            data_out = json.loads(out)
+        except Exception:
+            data_out = {"error": "Retorno inválido da ferramenta"}
+        
+        if data_out.get("error"):
+            print("[InterviewAgent] error updating score via tool")
             return "Desculpe, ocorreu um erro ao atualizar seu score. Por favor, tente novamente."
         
-        # Update session
         session_manager.update_customer_score(new_score)
-        print("Interview agent session score updated")
+        print("[InterviewAgent] session score updated")
         
-        # Reset interview state
         session_manager.interview_data = {}
         session_manager.interview_step = 0
-        if hasattr(session_manager, "interview_attempts"):
-            session_manager.interview_attempts = {}
-        print("Interview agent reset interview state")
+        session_manager.interview_attempts = {}
+        print("[InterviewAgent] reset interview state")
         
-        # Switch back to credit agent
         session_manager.switch_agent("credit")
-        print("Interview agent switched to credit agent")
+        print("[InterviewAgent] switched to credit agent")
         
-        old_score = result.get('old_score', 0)
+        old_score = data_out.get('old_score', current_score)
         score_change = new_score - old_score
         change_indicator = "📈" if score_change > 0 else "📉" if score_change < 0 else "➡️"
         summary = (
             f"{{\"old_score\": {old_score:.0f}, \"new_score\": {new_score:.0f}, \"delta\": {score_change:+.0f}}}"
         )
-        print(f"Interview agent summary: {summary}")
+        print(f"[InterviewAgent] summary: {summary}")
 
-        return (
+        response = (
             f"✅ Entrevista concluída com sucesso!\n\n" +
             f"Seu score foi atualizado:\nScore anterior: {old_score:.0f}\nNovo score: {new_score:.0f}\nVariação: {change_indicator} {score_change:+.0f} pontos\n\n"
         )
 
-    def _run_agent(self, message: str) -> str:
-        try:
-            print(f"Interview agent invoking agent with message: {message}")
-            result = self.agent_executor.invoke({"input": message})
-            print(f"Interview agent agent result: {result}")
-            return result.get("output", "")
-        except Exception:
-            print("Interview agent agent invocation failed; returning original message")
-            return message
+        return response
     
     def _calculate_score(self, data: dict) -> float:
         """Calculate credit score based on interview data"""
@@ -270,6 +336,8 @@ Respostas devem ser claras e amigáveis.
             "sim": -100,
             "não": 100
         }
+
+        {'renda_mensal': 6000.0, 'tipo_emprego': 'autônomo', 'despesas_fixas': 3500.0, 'num_dependentes': 0, 'tem_dividas': 'não'}
         
         # Extract data
         renda = data.get("renda_mensal", 0)
