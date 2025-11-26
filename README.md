@@ -71,15 +71,23 @@ O `SessionManager` mantém:
 - Tentativas de autenticação
 Referências: `utils/session_manager.py:10` (estado inicial), `utils/session_manager.py:41` (set_customer_data), `utils/session_manager.py:56` (switch_agent), `utils/session_manager.py:61` (score), `utils/session_manager.py:67` (limite).
 
+### Manipulação de Dados
+
+- Persistência simples via CSV para prova de conceito:
+  - `data/clientes.csv`: consulta e atualização de `score` e `limite_credito` (`tools/credit_tools.py:30-47`, `tools/credit_tools.py:100-103`, `tools/credit_tools.py:130-132`).
+  - `data/score_limite.csv`: regras de aprovação de limite (`tools/credit_tools.py:72-79`).
+  - `data/solicitacoes_aumento_limite.csv`: registro de solicitações com timestamp (`tools/credit_tools.py:90-98`).
+- Integração externa para câmbio:
+  - Frankfurter API para cotações (`tools/exchange_tools.py:41-56`), com tratamento de timeout e erros (`tools/exchange_tools.py:57-62`).
+- Autenticação determinística:
+  - Ferramenta `authenticate_customer` valida CPF e data (`tools/customer_tools.py:14-49`), acionada pelo `TriageAgent`.
+
 ## 🧩 Ferramentas (Tools) e Assinaturas
 
 - `AuthenticateCustomerTool(cpf, birthdate) -> Dict`
   - Autentica cliente contra `data/clientes.csv`
   - Referências: `tools/customer_tools.py:10` (definição), `tools/customer_tools.py:20` (execução)
 
-- `GetCustomerDataTool(cpf) -> Dict`
-  - Obtém dados do cliente
-  - Referências: `tools/customer_tools.py:58` (definição), `tools/customer_tools.py:68`
 
 - `CheckCreditLimitTool(cpf) -> {limite_credito, score}`
   - Consulta limite e score
@@ -155,7 +163,7 @@ Referências: `config.py:11` (GROQ), `agents/triage_agent.py:51` (CPF), `agents/
 
 ## 🛠️ Tecnologias Utilizadas
 
-- **Python 3.8+**
+- **Python 3.11+**
 - **LangChain** - Framework para agentes de IA
 - **Groq API** - LLM inference (Llama 3.3 70B)
 - **Streamlit** - Interface web interativa
@@ -212,7 +220,7 @@ banco-agil/
 
 ### 1. Pré-requisitos
 
-- Python 3.8 ou superior
+- Python 3.11 ou superior
 - Conta Groq (para API key)
 
 ### 2. Instalação
@@ -220,7 +228,7 @@ banco-agil/
 ```bash
 # Clone o repositório
 git clone https://github.com/Rjoaozinho1/banco_agil.git
-cd banco-agil
+cd banco_agil
 
 # Crie um ambiente virtual
 python -m venv venv
@@ -243,6 +251,7 @@ cp .env.example .env
 
 # Edite o .env e adicione sua GROQ_API_KEY
 # Obtenha sua key em: https://console.groq.com/keys
+# Necessário `GROQ_API_KEY` configurada (ver `config.py:15-19`).
 ```
 
 ### 4. Preparar Dados
