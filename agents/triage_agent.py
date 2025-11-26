@@ -3,8 +3,6 @@ Triage agent for authentication and routing
 """
 
 import json
-from langchain.agents import create_agent
-from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_groq import ChatGroq
 from tools.customer_tools import authenticate_customer
 from utils.session_manager import SessionManager
