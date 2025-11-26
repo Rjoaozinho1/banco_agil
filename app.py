@@ -44,13 +44,9 @@ st.subheader("Atendimento Virtual Inteligente")
 
 with st.sidebar:
     st.header("ℹ️ Informações")
-    st.write("**Status do Sistema:** ✅ Online")
 
     if st.session_state.session_manager.authenticated:
         st.success(f"👤 Cliente autenticado")
-        st.write(f"**CPF:** {st.session_state.session_manager.customer_cpf[:3]}.***.***-{st.session_state.session_manager.customer_cpf[-2:]}")
-        st.write(f"**Score:** {st.session_state.session_manager.get_customer_score()}")
-        st.write(f"**Limite:** R$ {st.session_state.session_manager.get_customer_limit():.2f}")
     else:
         st.info("🔐 Aguardando autenticação")
         remaining = st.session_state.session_manager.get_remaining_attempts()
@@ -61,6 +57,8 @@ with st.sidebar:
     st.write("**Agente Atual:**")
     st.write(st.session_state.session_manager.current_agent.replace("_", " ").title())
 
+    st.divider()
+    st.write("CPF: 11122233344\n\nDATA DE NASCIMENTO: 10/11/1978")
     st.divider()
     st.write("CPF: 12345678901\n\nDATA DE NASCIMENTO: 15/03/1985")
     
