@@ -4,7 +4,6 @@ Exchange agent for currency quotation
 
 from langchain_groq import ChatGroq
 from langchain.agents import create_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from tools.exchange_tools import GetExchangeRateTool
 from config import GROQ_API_KEY, GROQ_MODEL
 
@@ -19,8 +18,7 @@ class ExchangeAgent:
         )
         
         self.exchange_tool = GetExchangeRateTool()
-        
-        # Create agent with tool
+
         prompt = f"""Você é um assistente especializado em cotações de moedas do Banco Ágil.
 
         Sua função é:
@@ -46,12 +44,10 @@ class ExchangeAgent:
             print(f"Exchange agent result: {result}")
             
             response = result.get("output", "")
-            
-            # Add closing message
+
             if response:
                 response += "\n\nDeseja consultar outra moeda ou posso ajudá-lo com algo mais?"
 
-            # Fallback: try direct extraction and tool call if response is empty
             if not response:
                 code = self._extract_currency_code(message)
                 if code:
@@ -67,9 +63,9 @@ class ExchangeAgent:
         except Exception as e:
             return f"""Desculpe, não foi possível consultar a cotação no momento.
 
-Erro: {str(e)}
+            Erro: {str(e)}
 
-Por favor, tente novamente ou posso ajudá-lo com outro serviço?"""
+            Por favor, tente novamente ou posso ajudá-lo com outro serviço?"""
 
     def _extract_currency_code(self, message: str):
         m = message.lower()
