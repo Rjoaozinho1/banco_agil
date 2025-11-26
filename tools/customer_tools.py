@@ -2,88 +2,50 @@
 Tools for customer authentication and data access
 """
 
+import json
+from pydantic import Field, BaseModel
 import pandas as pd
-from langchain.tools import BaseTool
-from typing import Optional, Dict
-import os
+from langchain_core.tools import tool
 
-class AuthenticateCustomerTool(BaseTool):
-    """Tool to authenticate customer against database"""
-    
-    name: str = "authenticate_customer"
-    description: str = """
-    Authenticate a customer using CPF and birthdate.
-    Input should be a dictionary with 'cpf' and 'birthdate' keys.
-    Returns customer data if authenticated, or error message if not.
+class AuthSchema(BaseModel):
+    cpf: str = Field(description="CPF do cliente")
+    birthdate: str = Field(description="Data de nascimento do cliente no formato DD/MM/YYYY")
+
+@tool("authenticate_customer", description="Authenticate customer by verifying CPF and birthdate.", args_schema=AuthSchema)
+def authenticate_customer(cpf: str, birthdate: str) -> str:
+    """Authenticate customer by verifying CPF and birthdate.
+    Parameters:
+    - cpf: string containing the CPF.
+    - birthdate: birthdate in the format DD/MM/YYYY.
     """
 
-    def _run(self, cpf: str, birthdate: str) -> Dict:
-        """Authenticate customer"""
-        try:
-            # Load customers database
-            df = pd.read_csv('data/clientes.csv', dtype={'cpf': str})
-            
-            # Clean CPF (remove any formatting)
-            cpf_clean = ''.join(filter(str.isdigit, cpf))
-            
-            # Find customer
-            customer = df[df['cpf'] == cpf_clean]
-            
-            if customer.empty:
-                return {"error": "CPF not found"}
-            
-            # Check birthdate
-            customer_birthdate = customer.iloc[0]['data_nascimento']
-            if customer_birthdate != birthdate:
-                return {"error": "Birthdate mismatch"}
-            
-            # Return customer data
-            return {
-                "cpf": customer.iloc[0]['cpf'],
-                "data_nascimento": customer.iloc[0]['data_nascimento'],
-                "score": float(customer.iloc[0]['score']),
-                "limite_credito": float(customer.iloc[0]['limite_credito'])
-            }
-            
-        except FileNotFoundError:
-            return {"error": "Database not found"}
-        except Exception as e:
-            return {"error": f"Authentication error: {str(e)}"}
-    
-    def _arun(self, *args, **kwargs):
-        """Async version not implemented"""
-        raise NotImplementedError("Async not supported")
+    try:
+        df = pd.read_csv('data/clientes.csv', dtype={'cpf': str})
+        cpf_clean = ''.join(filter(str.isdigit, cpf))
 
+        bd = birthdate.strip()
+        if '-' in bd and '/' not in bd:
+            parts = bd.split('-')
+            if len(parts) == 3:
+                bd = f"{parts[0]}/{parts[1]}/{parts[2]}"
 
-class GetCustomerDataTool(BaseTool):
-    """Tool to get customer data by CPF"""
-    
-    name: str = "get_customer_data"
-    description: str = """
-    Get customer data by CPF.
-    Input should be the customer's CPF.
-    Returns customer information.
-    """
-    
-    def _run(self, cpf: str) -> Dict:
-        """Get customer data"""
-        try:
-            df = pd.read_csv('data/clientes.csv', dtype={'cpf': str})
-            
-            cpf_clean = ''.join(filter(str.isdigit, cpf))
-            customer = df[df['cpf'] == cpf_clean]
-            
-            if customer.empty:
-                return {"error": "Customer not found"}
+        customer = df[df['cpf'] == cpf_clean]
+        if customer.empty:
+            return json.dumps({"error": "CPF não encontrado no sistema."})
 
-            return {
-                "cpf": customer.iloc[0]['cpf'],
-                "score": float(customer.iloc[0]['score']),
-                "limite_credito": float(customer.iloc[0]['limite_credito'])
-            }
+        db_birthdate = str(customer.iloc[0]['data_nascimento'])
+        db_birthdate_norm = db_birthdate.replace('-', '/')
 
-        except Exception as e:
-            return {"error": str(e)}
+        if db_birthdate != bd and db_birthdate_norm != bd:
+            return json.dumps({"error": f"Data de nascimento incorreta. (Esperado formato similar a {db_birthdate})"})
 
-    def _arun(self, *args, **kwargs):
-        raise NotImplementedError("Async not supported")
+        result = {
+            "status": "success",
+            "cpf": customer.iloc[0]['cpf'],
+            "score": float(customer.iloc[0]['score']),
+            "limite_credito": float(customer.iloc[0]['limite_credito'])
+        }
+        return json.dumps(result)
+
+    except Exception as e:
+        return json.dumps({"error": f"Erro técnico na validação: {str(e)}"})
