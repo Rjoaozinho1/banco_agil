@@ -2,85 +2,61 @@
 Tools for currency exchange operations
 """
 
-from langchain.tools import BaseTool
-from typing import Dict
+from pydantic import BaseModel, Field
+from langchain_core.tools import tool
 import requests
 
-class GetExchangeRateTool(BaseTool):
-    """Tool to get real-time currency exchange rates"""
-    
-    name: str = "get_exchange_rate"
-    description: str = """
-    Get current exchange rate for a currency against BRL (Brazilian Real).
-    Input should be the currency code (e.g., 'USD', 'EUR', 'GBP').
-    Returns the current exchange rate and additional information.
-    """
-    
-    def _run(self, currency_code: str) -> str:
-        """Get exchange rate for specified currency"""
+class ExchangeRateSchema(BaseModel):
+    currency_code: str = Field(description="Código ISO da moeda (e.g., USD, EUR, GBP, JPY, ARS)")
+
+@tool("get_exchange_rate", description="Obter a cotação atual da moeda contra BRL", args_schema=ExchangeRateSchema)
+def get_exchange_rate(currency_code: str) -> str:
+    try:
+        code = currency_code.upper().strip()
+
+        currency_map = {
+            "DOLAR": "USD",
+            "DÓLAR": "USD",
+            "EURO": "EUR",
+            "LIBRA": "GBP",
+            "IENE": "JPY",
+            "YEN": "JPY",
+            "PESO": "ARS",
+            "PESO ARGENTINO": "ARS",
+            "DOLAR AMERICANO": "USD",
+            "USD": "USD",
+            "EUR": "EUR",
+            "GBP": "GBP",
+            "JPY": "JPY",
+            "ARS": "ARS"
+        }
+
+        if code in currency_map:
+            code = currency_map[code]
+
+        supported = {"USD", "EUR", "GBP", "JPY", "ARS"}
+        if code not in supported:
+            return "Moeda não suportada. Informe um código válido: USD, EUR, GBP, JPY, ARS."
+
+        url = f"https://api.frankfurter.app/latest?from={code}&to=BRL"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        rate_raw = data.get("rates", {}).get("BRL")
         try:
-            # Normalize currency code
-            currency_code = currency_code.upper().strip()
-            
-            # Map common names to codes
-            currency_map = {
-                "DOLAR": "USD",
-                "DÓLAR": "USD",
-                "EURO": "EUR",
-                "LIBRA": "GBP",
-                "IENE": "JPY",
-                "YEN": "JPY",
-                "PESO": "ARS",
-                "PESO ARGENTINO": "ARS",
-                "DOLAR AMERICANO": "USD",
-                "USD": "USD",
-                "EUR": "EUR",
-                "GBP": "GBP",
-                "JPY": "JPY",
-                "ARS": "ARS"
-            }
-            
-            if currency_code in currency_map:
-                currency_code = currency_map[currency_code]
-            
-            supported = {"USD", "EUR", "GBP", "JPY", "ARS"}
-            if currency_code not in supported:
-                return (
-                    "Moeda não suportada. Por favor informe um código ISO válido ou nome comum: "
-                    "USD (Dólar), EUR (Euro), GBP (Libra), JPY (Iene/Yen), ARS (Peso Argentino)."
-                )
+            rate = float(rate_raw) if rate_raw is not None else None
+        except Exception:
+            rate = None
 
-            url = f"https://api.frankfurter.app/latest?from={currency_code}&to=BRL"
-            
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            
-            data = response.json()
+        if rate is None:
+            return "Não foi possível obter a cotação no momento. Tente novamente mais tarde."
 
-            try:
-                rate = float(data.get("rates", {}).get("BRL"))
-            except Exception:
-                rate = None
-            date = data.get("date")
-            base = data.get("base", currency_code)
+        return f"{rate:.4f}"
 
-            if rate is None:
-                return "Não foi possível obter a cotação no momento. Tente novamente mais tarde."
-
-            return (
-                f"1 {base} = {rate:.4f} BRL (data {date}). "
-                "Você deseja consultar outra moeda?"
-            )
-            
-        except requests.exceptions.Timeout:
-            return "Desculpe, o serviço de cotação está demorando para responder. Por favor, tente novamente em alguns instantes."
-        
-        except requests.exceptions.RequestException as e:
-            return f"Não foi possível consultar a cotação no momento. Por favor, tente novamente mais tarde."
-        
-        except Exception as e:
-            return f"Erro ao consultar cotação: {str(e)}"
-    
-    def _arun(self, *args, **kwargs):
-        """Async version not implemented"""
-        raise NotImplementedError("Async not supported")
+    except requests.exceptions.Timeout:
+        return "Desculpe, o serviço de cotação está demorando para responder. Tente novamente em alguns instantes."
+    except requests.exceptions.RequestException:
+        return "Não foi possível consultar a cotação no momento. Por favor, tente novamente mais tarde."
+    except Exception as e:
+        return f"Erro ao consultar cotação: {str(e)}"
