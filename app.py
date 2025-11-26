@@ -49,16 +49,20 @@ with st.sidebar:
     if st.session_state.session_manager.authenticated:
         st.success(f"👤 Cliente autenticado")
         st.write(f"**CPF:** {st.session_state.session_manager.customer_cpf[:3]}.***.***-{st.session_state.session_manager.customer_cpf[-2:]}")
+        st.write(f"**Score:** {st.session_state.session_manager.get_customer_score()}")
+        st.write(f"**Limite:** R$ {st.session_state.session_manager.get_customer_limit():.2f}")
     else:
         st.info("🔐 Aguardando autenticação")
+        remaining = st.session_state.session_manager.get_remaining_attempts()
+        if st.session_state.session_manager.auth_attempts > 0:
+            st.warning(f"⚠️ Tentativas restantes: {remaining}")
 
     st.divider()
     st.write("**Agente Atual:**")
     st.write(st.session_state.session_manager.current_agent.replace("_", " ").title())
 
     st.divider()
-    st.write("**CPF:** 12345678901")
-    st.write("**DATA DE NASCIMENTO:** 15/03/1985")
+    st.write("CPF: 12345678901\n\nDATA DE NASCIMENTO: 15/03/1985")
     
     st.divider()
     if st.button("🔄 Reiniciar Conversa"):
@@ -71,25 +75,15 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
-if len(st.session_state.messages) == 0:
-    initial_message = """Olá! Bem-vindo ao Banco Ágil! 👋
 
-    Sou seu assistente virtual e estou aqui para ajudá-lo com:
-    - 💳 Consulta e aumento de limite de crédito
-    - 💱 Cotação de moedas
-    - 📋 Entrevista para atualização de score
-    """
-    
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": initial_message
-    })
-    with st.chat_message("assistant"):
-        st.write(initial_message)
+if st.session_state.session_manager.session_ended:
+    st.warning("⚠️ **Sessão encerrada.** Por favor, clique em 'Reiniciar Conversa' para começar novamente.")
+    st.stop()
 
 if prompt := st.chat_input("Digite sua mensagem..."):
 
     st.session_state.messages.append({"role": "user", "content": prompt})
+    st.session_state.session_manager.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.write(prompt)
 
@@ -100,17 +94,46 @@ if prompt := st.chat_input("Digite sua mensagem..."):
                     prompt,
                     st.session_state.session_manager
                 )
-                
+
+                if not isinstance(response, str):
+                    response = str(response) if response else "Sem resposta"
+
                 st.write(response)
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": response
                 })
-                
-            except Exception as e:
-                error_msg = f"Desculpe, ocorreu um erro ao processar sua mensagem. Por favor, tente novamente. (Erro: {str(e)})"
-                st.error(error_msg)
+                st.session_state.session_manager.messages.append({
+                    "role": "assistant",
+                    "content": response
+                })
+
+
+                if st.session_state.session_manager.session_ended:
+                    st.rerun()
+
+            except ValueError as ve:
+
+                error_msg = str(ve)
+                st.warning(error_msg)
                 st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
+                st.session_state.session_manager.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
+            except Exception as e:
+
+                error_msg = "Ocorreu um erro ao processar sua mensagem. Por favor, tente novamente ou reinicie a conversa."
+                st.error(error_msg)
+                print(f"[APP] Erro inesperado: {e}")
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
+                st.session_state.session_manager.messages.append({
                     "role": "assistant",
                     "content": error_msg
                 })
