@@ -268,7 +268,7 @@ class InterviewAgent:
             session_manager.interview_data = {}
             session_manager.interview_step = 0
             session_manager.interview_attempts = {}
-            session_manager.switch_agent("credit")
+            session_manager.switch_agent("credito")
             response = (
                 f"Entrevista concluída. Seu score atual permanece {current_score:.0f}. "
                 f"Para melhorar seu score, podemos revisar suas informações e hábitos financeiros."
@@ -298,7 +298,7 @@ class InterviewAgent:
         session_manager.interview_attempts = {}
         print("[InterviewAgent] reset interview state")
         
-        session_manager.switch_agent("credit")
+        session_manager.switch_agent("credito")
         print("[InterviewAgent] switched to credit agent")
         
         old_score = data_out.get('old_score', current_score)
@@ -311,7 +311,7 @@ class InterviewAgent:
 
         response = (
             f"✅ Entrevista concluída com sucesso!\n\n" +
-            f"Seu score foi atualizado:\nScore anterior: {old_score:.0f}\nNovo score: {new_score:.0f}\nVariação: {change_indicator} {score_change:+.0f} pontos\n\n"
+            f"Seu score foi atualizado:\n\nScore anterior: {old_score:.0f}\n\nNovo score: {new_score:.0f}\n\nVariação: {change_indicator} {score_change:+.0f} pontos\n\n"
         )
 
         return response
