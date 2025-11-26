@@ -30,6 +30,14 @@ class SessionManager:
         # Interview state
         self.interview_data: Dict = {}
         self.interview_step: int = 0
+        self.interview_attempts: Dict = {}
+        self.interview_examples_shown: Dict = {
+            "renda_mensal": False,
+            "tipo_emprego": False,
+            "despesas_fixas": False,
+            "num_dependentes": False,
+            "tem_dividas": False,
+        }
 
     def reset(self):
         """Reset session to initial state"""
