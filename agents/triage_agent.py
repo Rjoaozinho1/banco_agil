@@ -191,6 +191,7 @@ class TriageAgent:
                 return agent.process(message, session_manager)
             
             else:
+
                 return (
                     f"Olá! Estou aqui para ajudar. "
                     f"Posso auxiliá-lo com:\n"
