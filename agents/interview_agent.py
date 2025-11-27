@@ -3,8 +3,8 @@ Interview agent for credit score recalculation
 """
 
 import re
+import json
 from langchain_groq import ChatGroq
-from numpy import empty
 from tools.credit_tools import update_customer_score
 from utils.session_manager import SessionManager
 from config import GROQ_API_KEY, GROQ_MODEL
@@ -277,7 +277,7 @@ class InterviewAgent:
             return response
         
         print(f"[InterviewAgent] invoking update_customer_score with cpf={session_manager.customer_cpf}, new_score={new_score}")
-        import json
+
         out = update_customer_score.invoke({"cpf": session_manager.customer_cpf, "new_score": new_score})
         print(f"[InterviewAgent] update_customer_score raw result: {out}")
         
